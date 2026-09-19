@@ -1146,30 +1146,37 @@ async function callGoogleAPI(turns){
 }
 
 
-async function callDirectAPI(turns){
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+async function callDirectAPI(turns) {
+  // 💡 Redirigimos esta función para que use tu Cloudflare Worker real con Gemini
+  const LINK_SERVIDOR = "https://workers.dev";
+
+  const resp = await fetch(LINK_SERVIDOR, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': directApiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1000,
-      messages: turns
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 
+      messages: turns 
     })
   });
-  if(!resp.ok){
-    let detail = '';
-    try{ const j = await resp.json(); detail = j.error && j.error.message ? j.error.message : ''; }catch(e){}
-    throw new Error('HTTP ' + resp.status + (detail ? ' — ' + detail : ''));
+
+  let data;
+  try { 
+    data = await resp.json(); 
+  } catch(e) { 
+    data = null; 
   }
-  const data = await resp.json();
-  const text = (data.content||[]).map(b=>b.text||'').join('\n');
-  return { text };
+
+  if (!resp.ok) {
+    throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
+  }
+
+  // Extraemos la respuesta limpia de tu Worker de Gemini
+  if (data && data.reply) {
+    return { text: data.reply };
+  } else {
+    throw new Error("El servidor no devolvió una respuesta válida.");
+  }
 }
+
 
 async function sendChat(text){
   if(!text.trim() || !chatMode) return;
