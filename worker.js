@@ -76,7 +76,7 @@ export default {
 
       // 6) Extracción ultra-segura del texto devuelto por Google Gemini
       if (response.ok && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0]) {
-        const textReply = data.candidates[0].content.parts[0].text;
+        const textReply = data.candidates.content.parts.text;
         return jsonResponse({ reply: textReply });
       } else {
         const errMsg = data.error?.message || "Estructura de respuesta inesperada en el motor de Gemini";
