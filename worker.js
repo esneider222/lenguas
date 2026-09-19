@@ -1,27 +1,9 @@
 /**
- * WORKER "TUTOR IA — Lengua & Letras"
- * ------------------------------------------------------------
- * Qué hace:
- * 1. Recibe la pregunta del estudiante + el token de Google que generó al iniciar sesión.
- * 2. Verifica ese token directamente con Google (así confirma que es un login real).
- * 3. (Opcional) revisa una lista blanca de correos permitidos.
- * 4. (Opcional) aplica un límite diario de preguntas por persona, usando Cloudflare KV.
- * 5. Llama a la API de Anthropic con TU clave secreta (nunca viaja al celular del estudiante).
- * 6. Devuelve la respuesta al navegador.
- *
- * CONFIGURACIÓN NECESARIA (Cloudflare Dashboard → tu Worker → Settings → Variables):
- *   ANTHROPIC_API_KEY   (secreto)  → tu clave de https://console.anthropic.com
- *   GOOGLE_CLIENT_ID    (texto)    → el Client ID que generaste en Google Cloud Console
- *   ALLOWED_EMAILS      (texto, opcional) → "correo1@gmail.com,correo2@gmail.com" — si lo dejas vacío, cualquier cuenta de Google puede usarlo
- *   DAILY_LIMIT         (texto, opcional) → ej. "30" (preguntas por persona por día). Si lo dejas vacío, no hay límite.
- *
- * Si usas el límite diario, además debes crear un "KV Namespace" en Cloudflare
- * (Workers & Pages → KV → Create) y enlazarlo a este Worker con el nombre RATE_LIMIT_KV
- * (Settings → Variables → KV Namespace Bindings).
+ * WORKER "TUTOR IA — Lengua & Letras" (CONECTADO A GOOGLE GEMINI)
+ * VERSIÓN FINAL BLINDADA - USO LIBRE PARA APK MÓVIL
  */
 
-const ANTHROPIC_MODEL = "claude-sonnet-4-6";
-const MAX_TOKENS = 1000;
+const GEMINI_MODEL = "gemini-1.5-flash"; 
 
 function corsHeaders() {
   return {
@@ -40,6 +22,7 @@ function jsonResponse(obj, status = 200) {
 
 export default {
   async fetch(request, env) {
+    // 1) Control de seguridad de peticiones CORS
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders() });
     }
@@ -47,6 +30,7 @@ export default {
       return jsonResponse({ error: "Método no permitido" }, 405);
     }
 
+    // 2) Validar el cuerpo del mensaje recibido
     let body;
     try {
       body = await request.json();
@@ -54,76 +38,53 @@ export default {
       return jsonResponse({ error: "JSON inválido" }, 400);
     }
 
-    const { idToken, messages } = body;
-    if (!idToken || !messages) {
-      return jsonResponse({ error: "Falta idToken o messages" }, 400);
+    const messages = body.messages;
+    if (!messages || !messages.length) {
+      return jsonResponse({ error: "Falta el historial de mensajes" }, 400);
     }
 
-    // 1) Verificar el token de Google
-    let tokenInfo;
+    // 3) Verificar la existencia de la API Key de Gemini en Cloudflare
+    if (!env.GEMINI_API_KEY) {
+      return jsonResponse({ error: "Servidor no configurado. Falta GEMINI_API_KEY en Cloudflare." }, 500);
+    }
+
+    // 4) Adaptar formato al estándar exigido por Google Gemini
+    const contents = messages.map(msg => ({
+      role: msg.role === "assistant" ? "model" : "user",
+      parts: [{ text: msg.content || "" }]
+    }));
+
+    const systemInstruction = {
+      parts: [{ text: "Eres el tutor de IA de la plataforma Lengua & Letras. Ayuda al estudiante con sus dudas sobre lingüística, literatura castellana, pedagogía e inglés académico. Responde de forma clara, amable y pedagógica." }]
+    };
+
+    // 5) Petición uniendo la URL oficial de forma limpia con tu clave de entorno
     try {
-      const tiResp = await fetch(
-        `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`
-      );
-      if (!tiResp.ok) return jsonResponse({ error: "Token de Google inválido o expirado" }, 401);
-      tokenInfo = await tiResp.json();
-    } catch (e) {
-      return jsonResponse({ error: "No se pudo verificar el token de Google" }, 502);
-    }
+      const baseUrl = "https://googleapis.com" + GEMINI_MODEL + ":generateContent";
+      const geminiUrl = baseUrl + "?key=" + env.GEMINI_API_KEY;
 
-    if (!env.GOOGLE_CLIENT_ID || tokenInfo.aud !== env.GOOGLE_CLIENT_ID) {
-      return jsonResponse({ error: "El token no corresponde a esta aplicación" }, 401);
-    }
-
-    const email = tokenInfo.email || "desconocido";
-
-    // 2) Lista blanca opcional
-    const allowList = (env.ALLOWED_EMAILS || "")
-      .split(",")
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean);
-    if (allowList.length > 0 && !allowList.includes(email.toLowerCase())) {
-      return jsonResponse({ error: `El correo ${email} no está autorizado para usar este tutor.` }, 403);
-    }
-
-    // 3) Límite diario opcional (requiere KV Namespace enlazado como RATE_LIMIT_KV)
-    const dailyLimit = parseInt(env.DAILY_LIMIT || "0", 10);
-    if (dailyLimit > 0 && env.RATE_LIMIT_KV) {
-      const today = new Date().toISOString().slice(0, 10);
-      const key = `usage:${email}:${today}`;
-      const currentRaw = await env.RATE_LIMIT_KV.get(key);
-      const current = parseInt(currentRaw || "0", 10);
-      if (current >= dailyLimit) {
-        return jsonResponse(
-          { error: `Alcanzaste el límite de ${dailyLimit} preguntas por hoy. Vuelve mañana.` },
-          429
-        );
-      }
-      await env.RATE_LIMIT_KV.put(key, String(current + 1), { expirationTtl: 60 * 60 * 24 });
-    }
-
-    // 4) Llamar a Anthropic con la clave secreta del servidor
-    if (!env.ANTHROPIC_API_KEY) {
-      return jsonResponse({ error: "El servidor no tiene configurada ANTHROPIC_API_KEY" }, 500);
-    }
-    try {
-      const anthResp = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch(geminiUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: ANTHROPIC_MODEL,
-          max_tokens: MAX_TOKENS,
-          messages,
-        }),
+          contents: contents,
+          systemInstruction: systemInstruction
+        })
       });
-      const data = await anthResp.json();
-      return jsonResponse(data, anthResp.status);
+
+      const data = await response.json();
+
+      // 6) Extracción ultra-segura del texto devuelto por Google Gemini
+      if (response.ok && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0]) {
+        const textReply = data.candidates[0].content.parts[0].text;
+        return jsonResponse({ reply: textReply });
+      } else {
+        const errMsg = data.error?.message || "Estructura de respuesta inesperada en el motor de Gemini";
+        return jsonResponse({ error: errMsg }, response.status || 400);
+      }
+
     } catch (e) {
-      return jsonResponse({ error: "Error llamando a la API de Anthropic: " + e.message }, 502);
+      return jsonResponse({ error: "Error de red con el servidor de Google: " + e.message }, 502);
     }
   },
 };
