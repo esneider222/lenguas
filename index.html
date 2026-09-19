@@ -1119,49 +1119,33 @@ async function trySetupGoogle(){
 }
 
 async function callGoogleAPI(turns){
-  const resp = await fetch(WORKER_URL, {
+  const LINK_SERVIDOR = "https://autumn-surf-ee82.esneideragt.workers.dev/";
+
+  const resp = await fetch(LINK_SERVIDOR, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ idToken: googleIdToken, messages: turns })
+    body: JSON.stringify({ messages: turns })
   });
+
   let data;
-  try{ data = await resp.json(); }catch(e){ data = null; }
-  if(!resp.ok){
+  try { 
+    data = await resp.json(); 
+  } catch(e) { 
+    data = null; 
+  }
+
+  if (!resp.ok) {
     throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
   }
-  const text = (data.content||[]).map(b=>b.text||'').join('\n');
-  return { text };
-}
 
-async function initChat(){
-  try{
-    sampleFn = await window.claude.use('sample');
-  }catch(e){ sampleFn = null; }
-
-  if(sampleFn){
-    chatMode = 'platform';
-    setChatReady();
-    addMsg('bot', '<p>Hola 👋 Soy tu tutor de Lengua Castellana, Literatura e Inglés. Pregúntame lo que quieras del temario, pídeme que te explique algo distinto, o que revise un ejercicio.</p>');
-    return;
-  }
-
-  const googleReady = await trySetupGoogle();
-
-  if(directApiKey){
-    chatMode = 'direct';
-    setChatReady();
-    addMsg('bot', '<p>Hola 👋 Estoy usando tu clave de API propia. Pregúntame lo que quieras del temario.</p>');
-  } else if(googleReady){
-    chatMode = null;
-    setChatBlocked('Inicia sesión con Google arriba para activar el tutor IA (o configura tu propia clave de API).');
-    addMsg('system', 'Inicia sesión con Google, o configura tu clave de API, para activar el tutor.');
+  // Lee de forma precisa la propiedad "reply" de Gemini
+  if (data && data.reply) {
+    return { text: data.reply };
   } else {
-    chatMode = null;
-    setChatBlocked('El tutor IA necesita una clave de API en esta app (botón "⚙ Configurar clave de API" arriba). Mientras tanto, puedes seguir usando la guía, la práctica y los juegos.');
-    addMsg('system', 'Tutor IA no configurado todavía en este dispositivo.');
+    throw new Error("El servidor no devolvió una respuesta válida.");
   }
 }
-initChat();
+
 
 async function callDirectAPI(turns){
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
