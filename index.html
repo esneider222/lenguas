@@ -1148,7 +1148,7 @@ async function callGoogleAPI(turns){
 
 async function callDirectAPI(turns) {
   // 💡 Redirigimos esta función para que use tu Cloudflare Worker real con Gemini
-  const LINK_SERVIDOR = "https://workers.dev";
+  const LINK_SERVIDOR = "https://autumn-surf-ee82.esneideragt.workers.dev/";
 
   const resp = await fetch(LINK_SERVIDOR, {
     method: 'POST',
@@ -1176,6 +1176,15 @@ async function callDirectAPI(turns) {
     throw new Error("El servidor no devolvió una respuesta válida.");
   }
 }
+
+  async function initChat(){
+  // Activamos el chat de inmediato en el APK sin pedir configuraciones extra
+  chatMode = 'direct'; 
+  setChatReady();
+  addMsg('bot', '<p>Hola 👋 Soy tu tutor de Lengua Castellana, Literatura e Inglés. ¡Ya estoy 100% activo en tu celular! Pregúntame lo que quieras del temario.</p>');
+}
+initChat();
+
 
 
 async function sendChat(text){
